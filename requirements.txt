@@ -1,4 +1,1 @@
 flask
-pvlib
-pandas
-numpy
