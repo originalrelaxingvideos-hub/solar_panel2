@@ -1,86 +1,75 @@
 from flask import Flask, jsonify
 import pvlib
-from datetime import datetime
+import pandas as pd
+from datetime import datetime, timedelta
 import pytz
-import os
 
 app = Flask(__name__)
 
-# -----------------------------
-# CONFIGURACION
-# -----------------------------
-LATITUD = 37.78926189842914
-LONGITUD = -5.037213738717979
+# ---- CONFIGURACION ----
+LATITUD = 40.4168      # Madrid
+LONGITUD = -3.7038
 TIMEZONE = "Europe/Madrid"
 
-# -----------------------------
-# FUNCION CALCULO ANGULO
-# -----------------------------
-def calcular_angulo():
+MAX_ANGULO = 55
+MIN_ANGULO = -55
+ANGULO_DEFENSA = 1     # noche
+
+# -----------------------
+
+@app.route("/")
+def simulacion_dia():
 
     tz = pytz.timezone(TIMEZONE)
+
+    # Hoy a las 06:00
     ahora = datetime.now(tz)
+    inicio = ahora.replace(hour=6, minute=0, second=0, microsecond=0)
+
+    # Mañana a las 06:00
+    fin = inicio + timedelta(days=1)
+
+    # Cada 30 minutos
+    tiempos = pd.date_range(
+        start=inicio,
+        end=fin,
+        freq="30min",
+        tz=TIMEZONE,
+        inclusive="left"
+    )
 
     # Posición solar
-    sol = pvlib.solarposition.get_solarposition(
-        ahora,
+    solar_position = pvlib.solarposition.get_solarposition(
+        tiempos,
         LATITUD,
         LONGITUD
     )
 
-    zenith = sol["apparent_zenith"].iloc[0]
-    azimuth = sol["azimuth"].iloc[0]
-    elevation = sol["apparent_elevation"].iloc[0]
+    resultados = []
 
-    # -----------------------------
-    # NOCHE → POSICION DEFENSA
-    # -----------------------------
-    if elevation <= 0:
-        return 90.0
+    for t in tiempos:
 
-    # -----------------------------
-    # TRACKER SOLAR
-    # -----------------------------
-    tracking = pvlib.tracking.singleaxis(
-        apparent_zenith=zenith,
-        solar_azimuth=azimuth,
-        axis_tilt=0,
-        axis_azimuth=180,
-        max_angle=90,
-        backtrack=False
-    )
+        elevacion = solar_position.loc[t, "apparent_elevation"]
 
-    tracker_angle = float(tracking["tracker_theta"])
+        # Noche
+        if elevacion <= 0:
+            angulo = ANGULO_DEFENSA
+        else:
+            # Convertimos elevación solar a rango -55 a 55
+            angulo = (elevacion / 90.0) * MAX_ANGULO
 
-    # -----------------------------
-    # LIMITE MECANICO ±55°
-    # -----------------------------
-    if tracker_angle > 55:
-        tracker_angle = 55.0
-    elif tracker_angle < -55:
-        tracker_angle = -55.0
+            if angulo > MAX_ANGULO:
+                angulo = MAX_ANGULO
+            if angulo < MIN_ANGULO:
+                angulo = MIN_ANGULO
 
-    # -----------------------------
-    # CONVERSION A TU SISTEMA
-    # 90° = horizontal
-    # -----------------------------
-    angulo_motor = tracker_angle + 90.0
+        resultados.append({
+            "hora": t.strftime("%H:%M"),
+            "angulo": float(f"{angulo:.2f}")
+        })
 
-    return angulo_motor
+    return jsonify(resultados)
 
 
-# -----------------------------
-# API
-# -----------------------------
-@app.route("/")
-def index():
-    angulo = calcular_angulo()
-    return jsonify({"angulo": angulo})
-
-
-# -----------------------------
-# SERVIDOR RENDER
-# -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000)
