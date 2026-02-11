@@ -1,65 +1,58 @@
-from flask import Flask, jsonify
-import pvlib
+from flask import Flask
 import pandas as pd
+import pvlib
 
 app = Flask(__name__)
 
-# --------- DATOS INSTALACION ---------
+# -----------------------------
+# UBICACION
+# -----------------------------
 LATITUD = 37.78926189842914
 LONGITUD = -5.037213738717979
+TIMEZONE = "Europe/Madrid"
 
-AXIS_AZIMUTH = 6      # eje del tracker (6º Oeste)
-AXIS_TILT = 0         # inclinación del eje
-
-# LIMITES MECANICOS
-ANGULO_MIN = -55
-ANGULO_MAX = 55
-
-# POSICION DEFENSA (NOCHE)
-ANGULO_DEFENSA = 92
+ANGULO_DEFENSA = 92   # posicion noche
 
 
 @app.route("/")
-def obtener_angulo():
+def angulo_solar():
 
-    tiempo = pd.DatetimeIndex([pd.Timestamp.utcnow()])
+    # Hora actual en Madrid
+    fecha = pd.Timestamp.now(tz=TIMEZONE)
 
-    # Posicion solar
-    sol = pvlib.solarposition.get_solarposition(
-        time=tiempo,
-        latitude=LATITUD,
-        longitude=LONGITUD
+    # Localizacion
+    location = pvlib.location.Location(
+        LATITUD,
+        LONGITUD,
+        tz=TIMEZONE
     )
 
-    zenith = float(sol["apparent_zenith"].iloc[0])
+    # Posicion solar
+    solpos = location.get_solarposition(fecha)
 
-    # -------- NOCHE --------
-    if zenith >= 90:
-        angulo = ANGULO_DEFENSA
+    elevacion = solpos["apparent_elevation"].values[0]
 
-    else:
-        # Calculo tracking normal
-        tracking = pvlib.tracking.singleaxis(
-            apparent_zenith=sol["apparent_zenith"],
-            apparent_azimuth=sol["azimuth"],
-            axis_tilt=AXIS_TILT,
-            axis_azimuth=AXIS_AZIMUTH,
-            max_angle=90,
-            backtrack=False
-        )
+    # -----------------------------
+    # NOCHE → posicion defensa
+    # -----------------------------
+    if elevacion <= 0:
+        return str(float(ANGULO_DEFENSA))
 
-        angulo = float(tracking["tracker_theta"].iloc[0])
+    # -----------------------------
+    # SEGUIDOR 1 EJE
+    # -----------------------------
+    tracking = pvlib.tracking.singleaxis(
+        apparent_zenith=solpos["apparent_zenith"],
+        apparent_azimuth=solpos["azimuth"],
+        axis_tilt=0,
+        axis_azimuth=6,
+        backtrack=False
+    )
 
-        # Limites mecanicos
-        if angulo > ANGULO_MAX:
-            angulo = ANGULO_MAX
-        elif angulo < ANGULO_MIN:
-            angulo = ANGULO_MIN
+    angulo = float(tracking["tracker_theta"].values[0])
 
-    return jsonify({
-        "angulo": angulo
-    })
+    return str(angulo)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run()
