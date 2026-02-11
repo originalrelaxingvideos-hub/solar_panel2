@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import pvlib
 import pandas as pd
 import pytz
@@ -14,13 +14,13 @@ LATITUD = 37.78926189842914
 LONGITUD = -5.037213738717979
 TIMEZONE = "Europe/Madrid"
 
-ANGULO_MAX = 55.0
-ANGULO_MIN = -55.0
-POSICION_DEFENSA = 1.0   # <-- cambiado
+ANGULO_MAX = 55
+ANGULO_MIN = -55
+POSICION_DEFENSA = 1.0
 
 
 # -----------------------------
-# LIMITADOR MECANICO
+# LIMITAR ANGULO
 # -----------------------------
 def limitar_angulo(angulo):
     if angulo > ANGULO_MAX:
@@ -33,19 +33,17 @@ def limitar_angulo(angulo):
 # -----------------------------
 # CALCULO ANGULO SOLAR
 # -----------------------------
-def calcular_angulo_en_tiempo(fecha_hora):
-
-    tiempo = pd.DatetimeIndex([fecha_hora])
+def calcular_angulo(fecha_hora):
 
     solpos = pvlib.solarposition.get_solarposition(
-        tiempo,
+        fecha_hora,
         LATITUD,
         LONGITUD
     )
 
     elevacion = solpos["apparent_elevation"].values[0]
 
-    # Noche → posicion defensa
+    # Noche -> posicion defensa
     if elevacion <= 0:
         return POSICION_DEFENSA
 
@@ -58,32 +56,52 @@ def calcular_angulo_en_tiempo(fecha_hora):
         backtrack=False
     )
 
-    angulo = float(tracking["tracker_theta"].values[0])
+    angulo = tracking["tracker_theta"].values[0]
 
-    # limitar al rango mecánico
     angulo = limitar_angulo(angulo)
 
-    return angulo
+    return round(float(angulo), 2)
 
 
 # -----------------------------
-# ANGULO ACTUAL
+# ANGULO ACTUAL (ESP)
 # -----------------------------
-def calcular_angulo_actual():
+@app.route("/")
+def home():
+
     tz = pytz.timezone(TIMEZONE)
     ahora = datetime.now(tz)
-    return calcular_angulo_en_tiempo(ahora)
+
+    tiempo = pd.DatetimeIndex([ahora])
+
+    angulo = calcular_angulo(tiempo)
+
+    return str(angulo)
 
 
 # -----------------------------
-# SIMULACION 24H (6AM → 6AM)
+# SIMULACION DIA COMPLETO
 # -----------------------------
-def simulacion_dia():
+@app.route("/simulacion")
+def simulacion():
 
     tz = pytz.timezone(TIMEZONE)
-    hoy = datetime.now(tz).date()
 
-    inicio = tz.localize(datetime.combine(hoy, datetime.min.time())) + timedelta(hours=6)
+    # Fecha recibida o hoy
+    fecha_param = request.args.get("fecha")
+
+    if fecha_param:
+        fecha_base = datetime.strptime(fecha_param, "%Y-%m-%d")
+    else:
+        fecha_base = datetime.now(tz)
+
+    inicio = tz.localize(datetime(
+        fecha_base.year,
+        fecha_base.month,
+        fecha_base.day,
+        6, 0, 0
+    ))
+
     fin = inicio + timedelta(days=1)
 
     tiempos = pd.date_range(
@@ -92,30 +110,18 @@ def simulacion_dia():
         freq="30min"
     )
 
-    resultado = []
+    resultados = []
 
     for t in tiempos:
-        angulo = calcular_angulo_en_tiempo(t)
+        tiempo = pd.DatetimeIndex([t])
+        angulo = calcular_angulo(tiempo)
 
-        resultado.append({
+        resultados.append({
             "hora": t.strftime("%H:%M"),
-            "angulo": round(angulo, 2)
+            "angulo": angulo
         })
 
-    return resultado
-
-
-# -----------------------------
-# RUTAS WEB
-# -----------------------------
-@app.route("/")
-def home():
-    return str(calcular_angulo_actual())
-
-
-@app.route("/simulacion")
-def simulacion():
-    return jsonify(simulacion_dia())
+    return jsonify(resultados)
 
 
 # -----------------------------
@@ -124,4 +130,3 @@ def simulacion():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
