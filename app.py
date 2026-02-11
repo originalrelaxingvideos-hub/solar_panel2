@@ -23,11 +23,7 @@ POSICION_DEFENSA = 1.0
 # LIMITAR ANGULO
 # -----------------------------
 def limitar_angulo(angulo):
-    if angulo > ANGULO_MAX:
-        return ANGULO_MAX
-    if angulo < ANGULO_MIN:
-        return ANGULO_MIN
-    return angulo
+    return max(ANGULO_MIN, min(ANGULO_MAX, angulo))
 
 
 # -----------------------------
@@ -43,7 +39,7 @@ def calcular_angulo(fecha_hora):
 
     elevacion = solpos["apparent_elevation"].values[0]
 
-    # Noche -> posicion defensa
+    # Noche -> defensa
     if elevacion <= 0:
         return POSICION_DEFENSA
 
@@ -57,7 +53,6 @@ def calcular_angulo(fecha_hora):
     )
 
     angulo = tracking["tracker_theta"].values[0]
-
     angulo = limitar_angulo(angulo)
 
     return round(float(angulo), 2)
@@ -73,7 +68,6 @@ def home():
     ahora = datetime.now(tz)
 
     tiempo = pd.DatetimeIndex([ahora])
-
     angulo = calcular_angulo(tiempo)
 
     return str(angulo)
@@ -87,27 +81,26 @@ def simulacion():
 
     tz = pytz.timezone(TIMEZONE)
 
-    # Fecha recibida o hoy
     fecha_param = request.args.get("fecha")
 
+    # ✅ SI SE PASA FECHA -> usarla
     if fecha_param:
         fecha_base = datetime.strptime(fecha_param, "%Y-%m-%d")
+        fecha_base = tz.localize(fecha_base)
     else:
         fecha_base = datetime.now(tz)
 
-    inicio = tz.localize(datetime(
-        fecha_base.year,
-        fecha_base.month,
-        fecha_base.day,
-        6, 0, 0
-    ))
+    # Inicio 06:00 del día indicado
+    inicio = fecha_base.replace(hour=6, minute=0, second=0, microsecond=0)
 
+    # Fin 06:00 del día siguiente
     fin = inicio + timedelta(days=1)
 
     tiempos = pd.date_range(
         start=inicio,
         end=fin,
-        freq="30min"
+        freq="30min",
+        tz=TIMEZONE
     )
 
     resultados = []
