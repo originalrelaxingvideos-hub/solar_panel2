@@ -1,58 +1,69 @@
 from flask import Flask
-import pandas as pd
 import pvlib
+import pandas as pd
+import pytz
+from datetime import datetime
+import os
 
 app = Flask(__name__)
 
 # -----------------------------
-# UBICACION
+# DATOS INSTALACION
 # -----------------------------
 LATITUD = 37.78926189842914
 LONGITUD = -5.037213738717979
 TIMEZONE = "Europe/Madrid"
 
-ANGULO_DEFENSA = 92   # posicion noche
+# -----------------------------
+# FUNCION CALCULO ANGULO
+# -----------------------------
+def calcular_angulo():
 
+    tz = pytz.timezone(TIMEZONE)
+    ahora = datetime.now(tz)
 
-@app.route("/")
-def angulo_solar():
-
-    # Hora actual en Madrid
-    fecha = pd.Timestamp.now(tz=TIMEZONE)
-
-    # Localizacion
-    location = pvlib.location.Location(
-        LATITUD,
-        LONGITUD,
-        tz=TIMEZONE
-    )
+    tiempo = pd.DatetimeIndex([ahora])
 
     # Posicion solar
-    solpos = location.get_solarposition(fecha)
+    solpos = pvlib.solarposition.get_solarposition(
+        tiempo,
+        LATITUD,
+        LONGITUD
+    )
 
     elevacion = solpos["apparent_elevation"].values[0]
 
-    # -----------------------------
-    # NOCHE → posicion defensa
-    # -----------------------------
+    # Si es de noche → posicion defensa
     if elevacion <= 0:
-        return str(float(ANGULO_DEFENSA))
+        return 92.0
 
-    # -----------------------------
-    # SEGUIDOR 1 EJE
-    # -----------------------------
+    # Tracker eje único
     tracking = pvlib.tracking.singleaxis(
         apparent_zenith=solpos["apparent_zenith"],
-        apparent_azimuth=solpos["azimuth"],
+        solar_azimuth=solpos["azimuth"],
         axis_tilt=0,
-        axis_azimuth=6,
+        axis_azimuth=6,   # tu orientación
+        max_angle=90,
         backtrack=False
     )
 
-    angulo = float(tracking["tracker_theta"].values[0])
+    angulo = tracking["tracker_theta"].values[0]
 
+    return float(angulo)
+
+
+# -----------------------------
+# RUTA WEB
+# -----------------------------
+@app.route("/")
+def home():
+    angulo = calcular_angulo()
     return str(angulo)
 
 
+# -----------------------------
+# ARRANQUE RENDER
+# -----------------------------
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
