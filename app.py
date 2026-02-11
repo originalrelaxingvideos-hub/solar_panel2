@@ -1,69 +1,65 @@
-from flask import Flask
-import pvlib
+from flask import Flask, jsonify
 import pandas as pd
+import pvlib
+from datetime import datetime, timedelta
 import pytz
-from datetime import datetime
-import os
 
 app = Flask(__name__)
 
-# -----------------------------
-# DATOS INSTALACION
-# -----------------------------
-LATITUD = 37.78926189842914
-LONGITUD = -5.037213738717979
-TIMEZONE = "Europe/Madrid"
+# Ubicación
+LAT = 37.78926189842914
+LON = -5.037213738717979
 
-# -----------------------------
-# FUNCION CALCULO ANGULO
-# -----------------------------
-def calcular_angulo():
+# Zona horaria Madrid
+TZ = "Europe/Madrid"
 
-    tz = pytz.timezone(TIMEZONE)
+@app.route("/")
+def simular_dia():
+
+    tz = pytz.timezone(TZ)
+
     ahora = datetime.now(tz)
+    hoy = ahora.date()
+    manana = hoy + timedelta(days=1)
 
-    tiempo = pd.DatetimeIndex([ahora])
-
-    # Posicion solar
-    solpos = pvlib.solarposition.get_solarposition(
-        tiempo,
-        LATITUD,
-        LONGITUD
+    # desde 06:00 hoy hasta 06:00 mañana
+    tiempos = pd.date_range(
+        start=f"{hoy} 06:00",
+        end=f"{manana} 06:00",
+        freq="30min",
+        tz=TZ
     )
 
-    elevacion = solpos["apparent_elevation"].values[0]
+    # posición solar
+    solpos = pvlib.solarposition.get_solarposition(
+        tiempos,
+        LAT,
+        LON
+    )
 
-    # Si es de noche → posicion defensa
-    if elevacion <= 0:
-        return 92.0
-
-    # Tracker eje único
+    # tracking eje único
     tracking = pvlib.tracking.singleaxis(
         apparent_zenith=solpos["apparent_zenith"],
         solar_azimuth=solpos["azimuth"],
         axis_tilt=0,
-        axis_azimuth=6,   # tu orientación
-        max_angle=90,
+        axis_azimuth=6,
         backtrack=False
     )
 
-    angulo = tracking["tracker_theta"].values[0]
+    resultado = []
 
-    return float(angulo)
+    for t, ang in zip(tiempos, tracking["tracker_theta"]):
+
+        if pd.isna(ang):
+            ang = 92.0   # posición defensa noche
+
+        resultado.append({
+            "hora": t.strftime("%H:%M"),
+            "angulo": float(ang)
+        })
+
+    return jsonify(resultado)
 
 
-# -----------------------------
-# RUTA WEB
-# -----------------------------
-@app.route("/")
-def home():
-    angulo = calcular_angulo()
-    return str(angulo)
-
-
-# -----------------------------
-# ARRANQUE RENDER
-# -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000)
