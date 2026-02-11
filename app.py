@@ -1,75 +1,127 @@
 from flask import Flask, jsonify
 import pvlib
 import pandas as pd
-from datetime import datetime, timedelta
 import pytz
+from datetime import datetime, timedelta
+import os
 
 app = Flask(__name__)
 
-# ---- CONFIGURACION ----
-LATITUD = 40.4168      # Madrid
-LONGITUD = -3.7038
+# -----------------------------
+# DATOS INSTALACION
+# -----------------------------
+LATITUD = 37.78926189842914
+LONGITUD = -5.037213738717979
 TIMEZONE = "Europe/Madrid"
 
-MAX_ANGULO = 55
-MIN_ANGULO = -55
-ANGULO_DEFENSA = 1     # noche
+ANGULO_MAX = 55.0
+ANGULO_MIN = -55.0
+POSICION_DEFENSA = 1.0   # <-- cambiado
 
-# -----------------------
 
-@app.route("/")
-def simulacion_dia():
+# -----------------------------
+# LIMITADOR MECANICO
+# -----------------------------
+def limitar_angulo(angulo):
+    if angulo > ANGULO_MAX:
+        return ANGULO_MAX
+    if angulo < ANGULO_MIN:
+        return ANGULO_MIN
+    return angulo
 
-    tz = pytz.timezone(TIMEZONE)
 
-    # Hoy a las 06:00
-    ahora = datetime.now(tz)
-    inicio = ahora.replace(hour=6, minute=0, second=0, microsecond=0)
+# -----------------------------
+# CALCULO ANGULO SOLAR
+# -----------------------------
+def calcular_angulo_en_tiempo(fecha_hora):
 
-    # Mañana a las 06:00
-    fin = inicio + timedelta(days=1)
+    tiempo = pd.DatetimeIndex([fecha_hora])
 
-    # Cada 30 minutos
-    tiempos = pd.date_range(
-        start=inicio,
-        end=fin,
-        freq="30min",
-        tz=TIMEZONE,
-        inclusive="left"
-    )
-
-    # Posición solar
-    solar_position = pvlib.solarposition.get_solarposition(
-        tiempos,
+    solpos = pvlib.solarposition.get_solarposition(
+        tiempo,
         LATITUD,
         LONGITUD
     )
 
-    resultados = []
+    elevacion = solpos["apparent_elevation"].values[0]
+
+    # Noche → posicion defensa
+    if elevacion <= 0:
+        return POSICION_DEFENSA
+
+    tracking = pvlib.tracking.singleaxis(
+        apparent_zenith=solpos["apparent_zenith"],
+        solar_azimuth=solpos["azimuth"],
+        axis_tilt=0,
+        axis_azimuth=6,
+        max_angle=90,
+        backtrack=False
+    )
+
+    angulo = float(tracking["tracker_theta"].values[0])
+
+    # limitar al rango mecánico
+    angulo = limitar_angulo(angulo)
+
+    return angulo
+
+
+# -----------------------------
+# ANGULO ACTUAL
+# -----------------------------
+def calcular_angulo_actual():
+    tz = pytz.timezone(TIMEZONE)
+    ahora = datetime.now(tz)
+    return calcular_angulo_en_tiempo(ahora)
+
+
+# -----------------------------
+# SIMULACION 24H (6AM → 6AM)
+# -----------------------------
+def simulacion_dia():
+
+    tz = pytz.timezone(TIMEZONE)
+    hoy = datetime.now(tz).date()
+
+    inicio = tz.localize(datetime.combine(hoy, datetime.min.time())) + timedelta(hours=6)
+    fin = inicio + timedelta(days=1)
+
+    tiempos = pd.date_range(
+        start=inicio,
+        end=fin,
+        freq="30min"
+    )
+
+    resultado = []
 
     for t in tiempos:
+        angulo = calcular_angulo_en_tiempo(t)
 
-        elevacion = solar_position.loc[t, "apparent_elevation"]
-
-        # Noche
-        if elevacion <= 0:
-            angulo = ANGULO_DEFENSA
-        else:
-            # Convertimos elevación solar a rango -55 a 55
-            angulo = (elevacion / 90.0) * MAX_ANGULO
-
-            if angulo > MAX_ANGULO:
-                angulo = MAX_ANGULO
-            if angulo < MIN_ANGULO:
-                angulo = MIN_ANGULO
-
-        resultados.append({
+        resultado.append({
             "hora": t.strftime("%H:%M"),
-            "angulo": float(f"{angulo:.2f}")
+            "angulo": round(angulo, 2)
         })
 
-    return jsonify(resultados)
+    return resultado
 
 
+# -----------------------------
+# RUTAS WEB
+# -----------------------------
+@app.route("/")
+def home():
+    return str(calcular_angulo_actual())
+
+
+@app.route("/simulacion")
+def simulacion():
+    return jsonify(simulacion_dia())
+
+
+# -----------------------------
+# ARRANQUE RENDER
+# -----------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
