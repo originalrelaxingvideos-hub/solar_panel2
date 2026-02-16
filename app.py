@@ -116,6 +116,41 @@ def simulacion():
 
     return jsonify(resultados)
 
+# -----------------------------
+# ANGULO POR HORA MANUAL (ESP)
+# -----------------------------
+@app.route("/test")
+def angulo_por_hora():
+
+    tz = pytz.timezone(TIMEZONE)
+
+    hora_param = request.args.get("hora")
+
+    # Si no se pasa hora -> defensa
+    if not hora_param:
+        return str(POSICION_DEFENSA)
+
+    try:
+        # Separar HH:MM
+        hora, minuto = map(int, hora_param.split(":"))
+
+        # Fecha de hoy
+        ahora = datetime.now(tz)
+        fecha_manual = ahora.replace(
+            hour=hora,
+            minute=minuto,
+            second=0,
+            microsecond=0
+        )
+
+        tiempo = pd.DatetimeIndex([fecha_manual])
+
+        angulo = calcular_angulo(tiempo)
+
+        return str(angulo)
+
+    except:
+        return str(POSICION_DEFENSA)
 
 # -----------------------------
 # ARRANQUE RENDER
