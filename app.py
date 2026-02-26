@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 import pvlib
 import pandas as pd
 import pytz
@@ -7,6 +8,7 @@ import os
 import json
 
 app = Flask(__name__)
+CORS(app, origins="*")
 
 # -----------------------------
 # DATOS INSTALACION
@@ -18,6 +20,11 @@ ANGULO_MAX = 55
 ANGULO_MIN = -55
 POSICION_DEFENSA = 1.0
 CALIBRACION_FILE = "calibracion.json"
+
+# -----------------------------
+# MODO ESP32 (en memoria)
+# -----------------------------
+modo_actual = {"modo": "STOP"}
 
 # -----------------------------
 # CARGAR / GUARDAR CALIBRACION
@@ -132,6 +139,22 @@ def guardar_calibracion():
         Vmax = data["Vmax"]
         guardar_calibracion_archivo(Vmin, Vmax)
         return jsonify({"status": "OK", "Vmin": Vmin, "Vmax": Vmax})
+    except Exception as e:
+        return jsonify({"status": "ERROR", "error": str(e)})
+
+# -----------------------------
+# MODO ESP32
+# -----------------------------
+@app.route("/modo", methods=["GET"])
+def get_modo():
+    return jsonify(modo_actual)
+
+@app.route("/modo", methods=["POST"])
+def set_modo():
+    try:
+        data = request.get_json()
+        modo_actual["modo"] = data["modo"]
+        return jsonify({"status": "OK", "modo": modo_actual["modo"]})
     except Exception as e:
         return jsonify({"status": "ERROR", "error": str(e)})
 
